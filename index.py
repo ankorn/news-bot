@@ -43,31 +43,31 @@ def fetch(url):
     try:
         response = requests.get(
             url, headers={'User-Agent': UserAgent().chrome})
-        logger.info(url, response.status_code)
+        logger.info(url)
     except Exception as error:
         logger.error(error)
 
     return response
 
 
-def parse_article(article_tree):
+def parse_article(article_card_tree, tag, date):
     article = Article()
-    article.title = article_tree.h3.text
-    article.url = 'https://lenta.ru' + article_tree.get('href')
-    article.tag = article_tree.find(
-        'a', {'class': 'topic-header__item topic-header__rubric'}).get_text()
-    date = article_tree.find(
-        'a', {'class': 'topic-header__item topic-header__time'}).get_text()
+    article.title = article_card_tree.h3.text
+    article.url = 'https://lenta.ru' + article_card_tree.get('href')
+    article.tag = tag
     article.id = f'{article.title}{date}'
 
     response = fetch(article.url)
-    tree = BeautifulSoup(response.content, features="html.parser")
+    article_tree = BeautifulSoup(response.content, features="html.parser")
 
-    text_parts = tree.find_all('p', {'class': 'topic-body__content-text'})
+    text_parts = article_tree.find_all(
+        'p', {'class': 'topic-body__content-text'})
     article.text = ''
 
     for text_part in text_parts:
         article.text += strip_tags(text_part.get_text())
+
+    logger.info(article)
 
     return article
 
@@ -79,11 +79,16 @@ def parse_article_list(index):
 
     articles_on_page = tree.find_all(
         'a', {'class': 'card-full-news _parts-news'})
-    tree.find()
-    articles_on_page_data = []
 
+    articles_on_page_data = []
     for article in articles_on_page:
-        articles_on_page_data.append(parse_article(article))
+        tag = article.find(
+            'span', {'class': 'card-full-news__info-item card-full-news__rubric'}).get_text()
+        date = article.find(
+            'time', {'class': 'card-full-news__info-item card-full-news__date'}).get_text()
+        articles_on_page_data.append(parse_article(article, tag, date))
+
+    return articles_on_page_data
 
 
 def main():
