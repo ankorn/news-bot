@@ -6,6 +6,7 @@ from io import StringIO
 import requests
 import time
 import numpy as np
+import pandas as pd
 
 
 class Article:
@@ -65,9 +66,10 @@ def parse_article(article_card_tree, tag, date):
     article.text = ''
 
     for text_part in text_parts:
+        if not text_part:
+            logger.warning(f'can\'t find text part for article {article.title}/')
+            continue
         article.text += strip_tags(text_part.get_text())
-
-    logger.info(article)
 
     return article
 
@@ -82,10 +84,17 @@ def parse_article_list(index):
 
     articles_on_page_data = []
     for article in articles_on_page:
-        tag = article.find(
-            'span', {'class': 'card-full-news__info-item card-full-news__rubric'}).get_text()
-        date = article.find(
-            'time', {'class': 'card-full-news__info-item card-full-news__date'}).get_text()
+        tagEl = article.find(
+            'span', {'class': 'card-full-news__info-item card-full-news__rubric'})
+        dateEl = article.find(
+            'time', {'class': 'card-full-news__info-item card-full-news__date'})
+        
+        if not tagEl or not dateEl:
+            logger.warning(f'can\'t find tag element or date element of card on page /parts/news/{index}/')
+            continue
+        
+        tag = tagEl.get_text()
+        date = dateEl.get_text()
         articles_on_page_data.append(parse_article(article, tag, date))
 
     return articles_on_page_data
@@ -102,12 +111,16 @@ def main():
         logger.info(articles_on_page_data[0].title)
 
         # 50:
-        if articles_on_page_data[0].title == previous_first_article_title or i > 10:
+        if articles_on_page_data[0].title == previous_first_article_title or i > 0:
             break
 
         articles_data.extend(articles_on_page_data)
+        
         previous_first_article_title = articles_on_page_data[0].title
         i += 1
+        
+    df = pd.DataFrame(data=articles_data)
+    df.to_pickle('df_final.p', compression='gzip')
 
 
 if __name__ == '__main__':
