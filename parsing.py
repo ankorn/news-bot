@@ -100,8 +100,7 @@ def parse_article_list(index):
     return articles_on_page_data
 
 
-def main():
-    # TODO: писать в файл
+def parse_articles():
     articles_data = []
     previous_first_article_title = ''
     i = 1
@@ -110,8 +109,7 @@ def main():
 
         logger.info(articles_on_page_data[0].title)
 
-        # 50:
-        if articles_on_page_data[0].title == previous_first_article_title or i > 0:
+        if articles_on_page_data[0].title == previous_first_article_title or i > 30:
             break
 
         articles_data.extend(articles_on_page_data)
@@ -121,7 +119,3 @@ def main():
         
     df = pd.DataFrame(data=articles_data)
     df.to_pickle('df_final.p', compression='gzip')
-
-
-if __name__ == '__main__':
-    main()
