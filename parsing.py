@@ -1,21 +1,24 @@
 from loguru import logger
-from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
-from html.parser import HTMLParser
-from io import StringIO
-import requests
+import re
 import time
-import numpy as np
 import pandas as pd
+from tqdm import tqdm
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from dataclasses import dataclass
+from io import StringIO
+from html.parser import HTMLParser
+from constants import DEPTH, TOPICS, DEPTH, SLEEP
 
-
+@dataclass
 class Article:
     id: str = None
     url: str = None
     title: str = None
-    tag: str = None
+    subtitle: str = None
     text: str = None
-
+    datetime: str = None
+    topic: str = None
 
 class MLStripper(HTMLParser):
     def __init__(self):
@@ -31,91 +34,97 @@ class MLStripper(HTMLParser):
     def get_data(self):
         return self.text.getvalue()
 
-
-def strip_tags(html):
+def strip_html(html):
     s = MLStripper()
     s.feed(html)
-    return s.get_data()
+    return s.get_data().replace('\xa0', ' ').replace('\n', ' ')
 
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument('headless')
+chrome_options.add_argument('no-sandbox')
+chrome_options.add_argument('disable-dev-shm-usage')
+driver = webdriver.Chrome(options=chrome_options)
 
-def fetch(url):
-    time.sleep(np.random.choice([1, 2, 3]))
-
-    try:
-        response = requests.get(
-            url, headers={'User-Agent': UserAgent().chrome})
-        logger.info(url)
-    except Exception as error:
-        logger.error(error)
-
-    return response
-
-
-def parse_article(article_card_tree, tag, date):
+def parse_article(article_card_soup, topic):
     article = Article()
-    article.title = article_card_tree.h3.text
-    article.url = 'https://lenta.ru' + article_card_tree.get('href')
-    article.tag = tag
-    article.id = f'{article.title}{date}'
 
-    response = fetch(article.url)
-    article_tree = BeautifulSoup(response.content, features="html.parser")
+    article.url = article_card_soup['href']
 
-    text_parts = article_tree.find_all(
-        'p', {'class': 'topic-body__content-text'})
+    article.topic = topic
+
+    s = re.findall(r'\d+.shtml', article.url)[0]
+    article.id = s[ : s.find('.')]
+
+    driver.get(BASE_URL + article.url)
+    time.sleep(SLEEP)
+
+    article_page_soup = BeautifulSoup(driver.page_source, "html.parser")
+    article_soup = article_page_soup.find_all('article', {'class' : 'b_article', 'itemtype': 'http://schema.org/NewsArticle'})[0]
+    text_soup = article_soup.find('div', {'class' : 'b_article-text', 'itemprop': 'articleBody'})
+    text_parts_soup = text_soup.find_all('p')
+
     article.text = ''
+    for text_part in text_parts_soup:
+        article.text += strip_html(text_part.get_text())
 
-    for text_part in text_parts:
-        if not text_part:
-            logger.warning(f'can\'t find text part for article {article.title}/')
-            continue
-        article.text += strip_tags(text_part.get_text())
+    article.title = strip_html(article_soup.find('h2', {'class' : 'headline', 'itemprop': 'alternativeHeadline'}).get_text())
+    article.subtitle = strip_html(article_soup.find('h1', {'class' : 'subheader', 'itemprop': 'headline'}).get_text())
+    article.datetime = strip_html(article_soup.find('time', {'class' : 'time', 'itemprop': 'datePublished'}).get_text())
 
     return article
 
+def parse_articles(news_cards_soup, topic):
+    articles = []
 
-def parse_article_list(index):
-    response = fetch(f'https://lenta.ru/parts/news/{index}/')
+    for card in tqdm(news_cards_soup):
+        try:
+            article = parse_article(card, topic)
+            articles.append(article)
+        except Exception as error:
+            logger.error(error)
+            pass
+    return articles
 
-    tree = BeautifulSoup(response.content, features="html.parser")
+def get_articles():
+    articles = []
 
-    articles_on_page = tree.find_all(
-        'a', {'class': 'card-full-news _parts-news'})
+    for topic in tqdm(TOPICS):
+        try:
+            url = f'{BASE_URL}{topic}/news/'
+            current_news_cards_soup = []
 
-    articles_on_page_data = []
-    for article in articles_on_page:
-        tagEl = article.find(
-            'span', {'class': 'card-full-news__info-item card-full-news__rubric'})
-        dateEl = article.find(
-            'time', {'class': 'card-full-news__info-item card-full-news__date'})
-        
-        if not tagEl or not dateEl:
-            logger.warning(f'can\'t find tag element or date element of card on page /parts/news/{index}/')
-            continue
-        
-        tag = tagEl.get_text()
-        date = dateEl.get_text()
-        articles_on_page_data.append(parse_article(article, tag, date))
+            # 30 news per page
+            for i in tqdm(range(DEPTH), leave=False):
+                try:
+                    driver.get(url)
+                    time.sleep(SLEEP)
 
-    return articles_on_page_data
+                    soup = BeautifulSoup(driver.page_source, "html.parser")
+                    current_news_cards_soup.extend(soup.find_all('a', { 'class': 'b_ear m_techlisting' }))
 
+                    href = soup.find('a', { 'class': 'b_showmorebtn-link' })['href']
+                    url = f'{BASE_URL}{href}'
+                    
+                except Exception as error:
+                    logger.error(error)
+                    pass
 
-def parse_articles():
-    articles_data = []
-    previous_first_article_title = ''
-    i = 1
-    while True:
-        articles_on_page_data = parse_article_list(i)
+            current_articles = parse_articles(current_news_cards_soup, topic)
+            logger.info(f'{topic} articles saved: {len(current_articles)}')
+            df = pd.DataFrame(data=current_articles)
+            df.to_pickle(f'df_gazeta_{topic}.p', compression='gzip')
 
-        logger.info(articles_on_page_data[0].title)
+            articles.extend(current_articles)
 
-        if articles_on_page_data[0].title == previous_first_article_title or i > 30:
-            break
+        except Exception as error:
+            logger.error(error)
+            pass
 
-        articles_data.extend(articles_on_page_data)
-        
-        previous_first_article_title = articles_on_page_data[0].title
-        i += 1
-        
-    df = pd.DataFrame(data=articles_data)
-    df.to_pickle('df_final.p', compression='gzip')
+    return articles
+
+articles = get_articles()
+
+driver.close()
+
+df = pd.DataFrame(data=articles)
+df.to_pickle('df_gazeta.p', compression='gzip')
