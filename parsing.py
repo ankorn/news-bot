@@ -8,7 +8,7 @@ from selenium import webdriver
 from dataclasses import dataclass
 from io import StringIO
 from html.parser import HTMLParser
-from constants import DEPTH, TOPICS, DEPTH, SLEEP
+from constants import DEPTH, BASE_URL, TOPICS, DEPTH, SLEEP
 
 @dataclass
 class Article:
